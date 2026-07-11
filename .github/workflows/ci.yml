@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt pytest
-      - run: pytest -q
+      - run: python -m pytest -q
       - name: Verify hidden scenarios are absent
         run: |
           ! rg -n 'HIDDEN_SCENARIOS|hidden-0[1-5]|6637|12377|44729|99173|104729' . \
