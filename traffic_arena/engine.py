@@ -308,35 +308,12 @@ def _car_spacing(direction: Direction) -> float:
     return CAR_SPACING_X if direction in ("E", "W") else CAR_SPACING_Y
 
 
-def _upstream_distance(world: _World, vehicle: Vehicle) -> float:
-    current = vehicle.route[vehicle.route_index]
-    x, y = _point(world, current)
-    if vehicle.route_index > 0:
-        px, py = _point(world, vehicle.route[vehicle.route_index - 1])
-        return abs(x - px) + abs(y - py)
-    if vehicle.direction == "E":
-        return x - MAP_EDGE
-    if vehicle.direction == "W":
-        return 1 - MAP_EDGE - x
-    if vehicle.direction == "S":
-        return y - MAP_EDGE
-    return 1 - MAP_EDGE - y
-
-
-def _queue_spacing(world: _World, vehicle: Vehicle, queue_length: int) -> float:
-    natural = _car_spacing(vehicle.direction)
-    if queue_length <= 1:
-        return natural
-    usable = max(_upstream_distance(world, vehicle) - _stop_distance(vehicle.direction), natural)
-    return min(natural, usable / (queue_length - 1))
-
-
-def _queue_point(world: _World, vehicle: Vehicle, rank: int, queue_length: int) -> tuple[float, float]:
+def _queue_point(world: _World, vehicle: Vehicle, rank: int) -> tuple[float, float]:
     current = vehicle.route[vehicle.route_index]
     x, y = _point(world, current)
     dx, dy = _direction_vector(vehicle.direction)
     lane_x, lane_y = _lane_offset(vehicle.direction)
-    distance = _stop_distance(vehicle.direction) + rank * _queue_spacing(world, vehicle, queue_length)
+    distance = _stop_distance(vehicle.direction) + rank * _car_spacing(vehicle.direction)
     return (x - dx * distance + lane_x, y - dy * distance + lane_y)
 
 
@@ -353,14 +330,25 @@ def _boundary_point(world: _World, vehicle: Vehicle, *, entering: bool) -> tuple
     return (x + lane_x, 1 + OFFSCREEN_Y if entering else -OFFSCREEN_Y)
 
 
+def _in_flight_rank(world: _World, vehicle: Vehicle) -> int:
+    if vehicle.to_intersection is None:
+        return 0
+    return sum(
+        1
+        for other_id in world.travelling
+        if other_id != vehicle.id
+        and world.vehicles[other_id].to_intersection == vehicle.to_intersection
+        and world.vehicles[other_id].direction == vehicle.direction
+        and world.vehicles[other_id].travel_remaining < vehicle.travel_remaining
+    )
+
+
 def _vehicle_positions(world: _World, tick: int) -> list[list[Any]]:
     positions: list[list[Any]] = []
-    queued_slots: dict[int, tuple[int, int]] = {}
+    queued_slots: dict[int, int] = {}
     for by_direction in world.queues.values():
         for queue in by_direction.values():
-            queued_slots.update(
-                {vehicle_id: (index, len(queue)) for index, vehicle_id in enumerate(queue)}
-            )
+            queued_slots.update({vehicle_id: index for index, vehicle_id in enumerate(queue)})
 
     headings = {"E": 0, "S": 90, "W": 180, "N": 270}
     for vehicle in world.vehicles.values():
@@ -368,9 +356,9 @@ def _vehicle_positions(world: _World, tick: int) -> list[list[Any]]:
             exit_age = tick - vehicle.finished_tick
             if exit_age > EXIT_TICKS:
                 continue
-            start = _queue_point(world, vehicle, 0, 1)
+            start = _queue_point(world, vehicle, 0)
             end = _boundary_point(world, vehicle, entering=False)
-            progress = min(exit_age / EXIT_TICKS, 1)
+            progress = (exit_age + 1) / (EXIT_TICKS + 1)
             x = start[0] + (end[0] - start[0]) * progress
             y = start[1] + (end[1] - start[1]) * progress
         elif vehicle.id in world.travelling and vehicle.from_intersection and vehicle.to_intersection:
@@ -383,25 +371,31 @@ def _vehicle_positions(world: _World, tick: int) -> list[list[Any]]:
                 source_y - dy * stop_distance + lane_y,
             )
             target_queue = world.queues[vehicle.to_intersection][vehicle.direction]
-            target_rank = len(target_queue)
-            target_length = target_rank + 1
+            target_rank = len(target_queue) + _in_flight_rank(world, vehicle)
             target_x, target_y = _point(world, vehicle.to_intersection)
-            target_distance = stop_distance + target_rank * _queue_spacing(
-                world, vehicle, target_length
-            )
+            target_distance = stop_distance + target_rank * _car_spacing(vehicle.direction)
             end = (
                 target_x - dx * target_distance + lane_x,
                 target_y - dy * target_distance + lane_y,
             )
-            progress = 1 - vehicle.travel_remaining / max(vehicle.travel_total, 1)
+            progress = min(
+                1,
+                (vehicle.travel_total - vehicle.travel_remaining + 1)
+                / max(vehicle.travel_total, 1),
+            )
             x = start[0] + (end[0] - start[0]) * progress
             y = start[1] + (end[1] - start[1]) * progress
         else:
-            rank, queue_length = queued_slots.get(vehicle.id, (0, 1))
-            x, y = _queue_point(world, vehicle, rank, queue_length)
+            rank = queued_slots.get(vehicle.id, 0)
+            x, y = _queue_point(world, vehicle, rank)
         entry_age = tick - vehicle.spawn_tick
         if entry_age < ENTRY_TICKS:
-            entry_x, entry_y = _boundary_point(world, vehicle, entering=True)
+            dx, dy = _direction_vector(vehicle.direction)
+            boundary_x, boundary_y = _boundary_point(world, vehicle, entering=True)
+            stop_x, stop_y = _queue_point(world, vehicle, 0)
+            entry_distance = (stop_x - boundary_x) * dx + (stop_y - boundary_y) * dy
+            entry_x = x - dx * entry_distance
+            entry_y = y - dy * entry_distance
             progress = entry_age / ENTRY_TICKS
             x = entry_x + (x - entry_x) * progress
             y = entry_y + (y - entry_y) * progress
