@@ -236,17 +236,17 @@ function drawCrosswalks(cx, cy, tangents) {
   for (const tangent of tangents) {
     const normal = { x: -tangent.y, y: tangent.x };
     for (const side of [-1, 1]) {
-      for (let offset = -28; offset <= 28; offset += 14) {
+      for (let offset = -38; offset <= 38; offset += 12.6667) {
         drawOrientedRect(
-          cx + tangent.x * side * 33 + normal.x * offset,
-          cy + tangent.y * side * 33 + normal.y * offset,
+          cx + tangent.x * side * 49 + normal.x * offset,
+          cy + tangent.y * side * 49 + normal.y * offset,
           tangent.x,
           tangent.y,
-          12,
-          6,
+          10,
+          8,
         );
       }
-      drawOrientedRect(cx + tangent.x * side * 49, cy + tangent.y * side * 49, normal.x, normal.y, 32, 3);
+      drawOrientedRect(cx + tangent.x * side * 61, cy + tangent.y * side * 61, normal.x, normal.y, 36, 3);
     }
   }
 }
