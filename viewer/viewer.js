@@ -210,14 +210,6 @@ function drawRoads(replay) {
   ctx.setLineDash([]);
 }
 
-function drawOrientedRect(cx, cy, tangentX, tangentY, length, width) {
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(Math.atan2(tangentY, tangentX));
-  ctx.fillRect(-length / 2, -width / 2, length, width);
-  ctx.restore();
-}
-
 function intersectionTangents(replay, intersection) {
   const center = worldPoint(intersection.x, intersection.y);
   return replay.map.roads.flatMap((road) => {
@@ -227,28 +219,12 @@ function intersectionTangents(replay, intersection) {
     const start = points[Math.max(0, index - 1)];
     const end = points[Math.min(points.length - 1, index + 1)];
     const length = Math.hypot(end.x - start.x, end.y - start.y);
-    return [{ x: (end.x - start.x) / length, y: (end.y - start.y) / length }];
+    return [{
+      x: (end.x - start.x) / length,
+      y: (end.y - start.y) / length,
+      axis: road.from.startsWith("west-") ? "EW" : "NS",
+    }];
   });
-}
-
-function drawCrosswalks(cx, cy, tangents) {
-  ctx.fillStyle = "rgba(231, 228, 217, 0.72)";
-  for (const tangent of tangents) {
-    const normal = { x: -tangent.y, y: tangent.x };
-    for (const side of [-1, 1]) {
-      for (let offset = -38; offset <= 38; offset += 12.6667) {
-        drawOrientedRect(
-          cx + tangent.x * side * 49 + normal.x * offset,
-          cy + tangent.y * side * 49 + normal.y * offset,
-          tangent.x,
-          tangent.y,
-          10,
-          8,
-        );
-      }
-      drawOrientedRect(cx + tangent.x * side * 61, cy + tangent.y * side * 61, normal.x, normal.y, 36, 3);
-    }
-  }
 }
 
 function signalColor(phase, axis) {
@@ -271,16 +247,29 @@ function drawSignal(x, y, color) {
 function drawIntersections(replay, frame) {
   for (const item of replay.map.intersections) {
     const { x, y } = worldPoint(item.x, item.y);
+    const tangents = intersectionTangents(replay, item);
     ctx.fillStyle = "#41413d";
     ctx.beginPath();
     ctx.arc(x, y, INTERSECTION_SIZE / 2, 0, Math.PI * 2);
     ctx.fill();
-    drawCrosswalks(x, y, intersectionTangents(replay, item));
     const phase = frame.signals[item.id] || "ALL_RED";
-    drawSignal(x + 36, y - 36, signalColor(phase, "NS"));
-    drawSignal(x - 36, y + 36, signalColor(phase, "NS"));
-    drawSignal(x + 36, y + 36, signalColor(phase, "EW"));
-    drawSignal(x - 36, y - 36, signalColor(phase, "EW"));
+    const horizontal = tangents.find((tangent) => tangent.axis === "EW");
+    const vertical = tangents.find((tangent) => tangent.axis === "NS");
+    const normalEW = horizontal ? { x: -horizontal.y, y: horizontal.x } : { x: 0, y: 1 };
+    const normalNS = vertical ? { x: -vertical.y, y: vertical.x } : { x: -1, y: 0 };
+    const signalOffset = ROAD_WIDTH / 2 + 7;
+    const corner = (ewSide, nsSide) => ({
+      x: x + normalEW.x * ewSide * signalOffset + normalNS.x * nsSide * signalOffset,
+      y: y + normalEW.y * ewSide * signalOffset + normalNS.y * nsSide * signalOffset,
+    });
+    const northEast = corner(-1, -1);
+    const southWest = corner(1, 1);
+    const southEast = corner(1, -1);
+    const northWest = corner(-1, 1);
+    drawSignal(northEast.x, northEast.y, signalColor(phase, "NS"));
+    drawSignal(southWest.x, southWest.y, signalColor(phase, "NS"));
+    drawSignal(southEast.x, southEast.y, signalColor(phase, "EW"));
+    drawSignal(northWest.x, northWest.y, signalColor(phase, "EW"));
     ctx.fillStyle = "#f7f7f4";
     ctx.font = "9px ui-monospace, monospace";
     ctx.textAlign = "center";
