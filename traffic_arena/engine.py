@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import random
 from collections import defaultdict, deque
 from collections.abc import Callable
@@ -68,17 +69,32 @@ class _World:
 MIN_GREEN = 5
 YELLOW_TICKS = 2
 ALL_RED_TICKS = 1
-MAP_EDGE = 0.035
-LANE_OFFSET_X = 0.012
-LANE_OFFSET_Y = 0.021
-STOP_DISTANCE_X = 0.046
-STOP_DISTANCE_Y = 0.079
-CAR_SPACING_X = 0.024
-CAR_SPACING_Y = 0.041
+WORLD_WIDTH = 1200
+WORLD_HEIGHT = 700
+LANE_OFFSET = 14
+STOP_DISTANCE = 55
+CAR_SPACING = 29
 ENTRY_TICKS = 5
 EXIT_TICKS = 6
 OFFSCREEN_X = 0.02
 OFFSCREEN_Y = 0.035
+
+PUBLIC_LAYOUTS: dict[str, tuple[tuple[tuple[float, float], ...], ...]] = {
+    "balanced-grid": (
+        ((0.27, 0.27), (0.72, 0.24)),
+        ((0.25, 0.74), (0.75, 0.70)),
+    ),
+    "northbound-morning": (
+        ((0.31, 0.17), (0.58, 0.14)),
+        ((0.36, 0.48), (0.64, 0.50)),
+        ((0.31, 0.82), (0.70, 0.84)),
+    ),
+    "city-rush": (
+        ((0.17, 0.20), (0.49, 0.14), (0.82, 0.23)),
+        ((0.13, 0.51), (0.52, 0.47), (0.87, 0.54)),
+        ((0.22, 0.82), (0.57, 0.86), (0.80, 0.79)),
+    ),
+}
 
 
 def intersection_id(row: int, col: int) -> str:
@@ -225,6 +241,26 @@ def _link_occupancy(world: _World, source: str, target: str) -> int:
     )
 
 
+def _approach_capacity(world: _World, source: str, target: str) -> int:
+    source_x, source_y = _point(world, source)
+    target_x, target_y = _point(world, target)
+    length = math.hypot(
+        (target_x - source_x) * WORLD_WIDTH,
+        (target_y - source_y) * WORLD_HEIGHT,
+    )
+    physical_capacity = max(1, int((length - 2 * STOP_DISTANCE) / CAR_SPACING) + 1)
+    return min(world.scenario.link_capacity, physical_capacity)
+
+
+def _reserved_approach(world: _World, target: str, direction: Direction) -> int:
+    return len(world.queues[target][direction]) + sum(
+        1
+        for vehicle_id in world.travelling
+        if world.vehicles[vehicle_id].to_intersection == target
+        and world.vehicles[vehicle_id].direction == direction
+    )
+
+
 def _release_queues(world: _World, tick: int) -> None:
     for item, by_direction in world.queues.items():
         phase = world.signals[item].phase
@@ -241,6 +277,8 @@ def _release_queues(world: _World, tick: int) -> None:
                 continue
             target = vehicle.route[vehicle.route_index + 1]
             if _link_occupancy(world, item, target) >= world.scenario.link_capacity:
+                continue
+            if _reserved_approach(world, target, direction) >= _approach_capacity(world, item, target):
                 continue
             queue.popleft()
             vehicle.from_intersection = item
@@ -276,6 +314,9 @@ def _increment_wait(world: _World) -> None:
 def _point(world: _World, intersection: str) -> tuple[float, float]:
     row = ord(intersection[0]) - 65
     col = int(intersection[1:]) - 1
+    layout = PUBLIC_LAYOUTS.get(world.scenario.id)
+    if layout and len(layout) == world.scenario.rows and len(layout[row]) == world.scenario.cols:
+        return layout[row][col]
     width = max(world.scenario.cols - 1, 1)
     height = max(world.scenario.rows - 1, 1)
     x_margin = 0.26 if world.scenario.cols == 2 else 0.16
@@ -286,48 +327,78 @@ def _point(world: _World, intersection: str) -> tuple[float, float]:
     )
 
 
-def _direction_vector(direction: Direction) -> tuple[int, int]:
-    return {
-        "E": (1, 0),
-        "W": (-1, 0),
-        "S": (0, 1),
-        "N": (0, -1),
-    }[direction]
+def _extend_route(
+    centers: list[tuple[float, float]], direction: Direction
+) -> list[tuple[float, float]]:
+    if len(centers) == 1:
+        x, y = centers[0]
+        if direction == "E":
+            return [(-OFFSCREEN_X, y), (x, y), (1 + OFFSCREEN_X, y)]
+        if direction == "W":
+            return [(1 + OFFSCREEN_X, y), (x, y), (-OFFSCREEN_X, y)]
+        if direction == "S":
+            return [(x, -OFFSCREEN_Y), (x, y), (x, 1 + OFFSCREEN_Y)]
+        return [(x, 1 + OFFSCREEN_Y), (x, y), (x, -OFFSCREEN_Y)]
+
+    first, second = centers[0], centers[1]
+    before_last, last = centers[-2], centers[-1]
+    if direction in ("E", "W"):
+        start_x = -OFFSCREEN_X if direction == "E" else 1 + OFFSCREEN_X
+        end_x = 1 + OFFSCREEN_X if direction == "E" else -OFFSCREEN_X
+        start_dx = first[0] - second[0]
+        end_dx = last[0] - before_last[0]
+        start_y = first[1] + (start_x - first[0]) * (first[1] - second[1]) / start_dx
+        end_y = last[1] + (end_x - last[0]) * (last[1] - before_last[1]) / end_dx
+        return [(start_x, start_y), *centers, (end_x, end_y)]
+
+    start_y = -OFFSCREEN_Y if direction == "S" else 1 + OFFSCREEN_Y
+    end_y = 1 + OFFSCREEN_Y if direction == "S" else -OFFSCREEN_Y
+    start_dy = first[1] - second[1]
+    end_dy = last[1] - before_last[1]
+    start_x = first[0] + (start_y - first[1]) * (first[0] - second[0]) / start_dy
+    end_x = last[0] + (end_y - last[1]) * (last[0] - before_last[0]) / end_dy
+    return [(start_x, start_y), *centers, (end_x, end_y)]
 
 
-def _lane_offset(direction: Direction) -> tuple[float, float]:
-    dx, dy = _direction_vector(direction)
-    return (-dy * LANE_OFFSET_X, dx * LANE_OFFSET_Y)
+def _route_points(world: _World, direction: Direction, route: tuple[str, ...]) -> list[tuple[float, float]]:
+    return _extend_route([_point(world, intersection) for intersection in route], direction)
 
 
-def _stop_distance(direction: Direction) -> float:
-    return STOP_DISTANCE_X if direction in ("E", "W") else STOP_DISTANCE_Y
+def _path_distances(points: list[tuple[float, float]]) -> list[float]:
+    distances = [0.0]
+    for start, end in zip(points, points[1:]):
+        length = math.hypot(
+            (end[0] - start[0]) * WORLD_WIDTH,
+            (end[1] - start[1]) * WORLD_HEIGHT,
+        )
+        distances.append(distances[-1] + length)
+    return distances
 
 
-def _car_spacing(direction: Direction) -> float:
-    return CAR_SPACING_X if direction in ("E", "W") else CAR_SPACING_Y
-
-
-def _queue_point(world: _World, vehicle: Vehicle, rank: int) -> tuple[float, float]:
-    current = vehicle.route[vehicle.route_index]
-    x, y = _point(world, current)
-    dx, dy = _direction_vector(vehicle.direction)
-    lane_x, lane_y = _lane_offset(vehicle.direction)
-    distance = _stop_distance(vehicle.direction) + rank * _car_spacing(vehicle.direction)
-    return (x - dx * distance + lane_x, y - dy * distance + lane_y)
-
-
-def _boundary_point(world: _World, vehicle: Vehicle, *, entering: bool) -> tuple[float, float]:
-    intersection = vehicle.route[0] if entering else vehicle.route[-1]
-    x, y = _point(world, intersection)
-    lane_x, lane_y = _lane_offset(vehicle.direction)
-    if vehicle.direction == "E":
-        return (-OFFSCREEN_X if entering else 1 + OFFSCREEN_X, y + lane_y)
-    if vehicle.direction == "W":
-        return (1 + OFFSCREEN_X if entering else -OFFSCREEN_X, y + lane_y)
-    if vehicle.direction == "S":
-        return (x + lane_x, -OFFSCREEN_Y if entering else 1 + OFFSCREEN_Y)
-    return (x + lane_x, 1 + OFFSCREEN_Y if entering else -OFFSCREEN_Y)
+def _point_along(
+    points: list[tuple[float, float]], distances: list[float], distance: float
+) -> tuple[float, float, float]:
+    segment = 0
+    if distance >= distances[-1]:
+        segment = len(points) - 2
+    elif distance > 0:
+        segment = next(
+            index
+            for index in range(len(distances) - 1)
+            if distances[index] <= distance <= distances[index + 1]
+        )
+    start = points[segment]
+    end = points[segment + 1]
+    segment_length = distances[segment + 1] - distances[segment]
+    amount = (distance - distances[segment]) / max(segment_length, 1)
+    start_x = start[0] * WORLD_WIDTH
+    start_y = start[1] * WORLD_HEIGHT
+    dx = (end[0] - start[0]) * WORLD_WIDTH / max(segment_length, 1)
+    dy = (end[1] - start[1]) * WORLD_HEIGHT / max(segment_length, 1)
+    x = start_x + (end[0] * WORLD_WIDTH - start_x) * amount - dy * LANE_OFFSET
+    y = start_y + (end[1] * WORLD_HEIGHT - start_y) * amount + dx * LANE_OFFSET
+    heading = math.degrees(math.atan2(dy, dx)) % 360
+    return (x / WORLD_WIDTH, y / WORLD_HEIGHT, heading)
 
 
 def _in_flight_rank(world: _World, vehicle: Vehicle) -> int:
@@ -350,56 +421,47 @@ def _vehicle_positions(world: _World, tick: int) -> list[list[Any]]:
         for queue in by_direction.values():
             queued_slots.update({vehicle_id: index for index, vehicle_id in enumerate(queue)})
 
-    headings = {"E": 0, "S": 90, "W": 180, "N": 270}
     for vehicle in world.vehicles.values():
+        points = _route_points(world, vehicle.direction, vehicle.route)
+        distances = _path_distances(points)
+        intersection_distances = distances[1:-1]
         if vehicle.finished_tick is not None:
             exit_age = tick - vehicle.finished_tick
             if exit_age > EXIT_TICKS:
                 continue
-            start = _queue_point(world, vehicle, 0)
-            end = _boundary_point(world, vehicle, entering=False)
             progress = (exit_age + 1) / (EXIT_TICKS + 1)
-            x = start[0] + (end[0] - start[0]) * progress
-            y = start[1] + (end[1] - start[1]) * progress
+            start = intersection_distances[-1] - STOP_DISTANCE
+            distance = start + (distances[-1] - start) * progress
         elif vehicle.id in world.travelling and vehicle.from_intersection and vehicle.to_intersection:
-            dx, dy = _direction_vector(vehicle.direction)
-            lane_x, lane_y = _lane_offset(vehicle.direction)
-            stop_distance = _stop_distance(vehicle.direction)
-            source_x, source_y = _point(world, vehicle.from_intersection)
-            start = (
-                source_x - dx * stop_distance + lane_x,
-                source_y - dy * stop_distance + lane_y,
-            )
             target_queue = world.queues[vehicle.to_intersection][vehicle.direction]
             target_rank = len(target_queue) + _in_flight_rank(world, vehicle)
-            target_x, target_y = _point(world, vehicle.to_intersection)
-            target_distance = stop_distance + target_rank * _car_spacing(vehicle.direction)
+            start = intersection_distances[vehicle.route_index] - STOP_DISTANCE
             end = (
-                target_x - dx * target_distance + lane_x,
-                target_y - dy * target_distance + lane_y,
+                intersection_distances[vehicle.route_index + 1]
+                - STOP_DISTANCE
+                - target_rank * CAR_SPACING
             )
             progress = min(
                 1,
                 (vehicle.travel_total - vehicle.travel_remaining + 1)
                 / max(vehicle.travel_total, 1),
             )
-            x = start[0] + (end[0] - start[0]) * progress
-            y = start[1] + (end[1] - start[1]) * progress
+            distance = start + (end - start) * progress
         else:
             rank = queued_slots.get(vehicle.id, 0)
-            x, y = _queue_point(world, vehicle, rank)
+            distance = (
+                intersection_distances[vehicle.route_index]
+                - STOP_DISTANCE
+                - rank * CAR_SPACING
+            )
         entry_age = tick - vehicle.spawn_tick
         if entry_age < ENTRY_TICKS:
-            dx, dy = _direction_vector(vehicle.direction)
-            boundary_x, boundary_y = _boundary_point(world, vehicle, entering=True)
-            stop_x, stop_y = _queue_point(world, vehicle, 0)
-            entry_distance = (stop_x - boundary_x) * dx + (stop_y - boundary_y) * dy
-            entry_x = x - dx * entry_distance
-            entry_y = y - dy * entry_distance
+            first_stop = intersection_distances[0] - STOP_DISTANCE
+            entry_start = distance - first_stop
             progress = entry_age / ENTRY_TICKS
-            x = entry_x + (x - entry_x) * progress
-            y = entry_y + (y - entry_y) * progress
-        positions.append([vehicle.id, round(x, 4), round(y, 4), headings[vehicle.direction]])
+            distance = entry_start + (distance - entry_start) * progress
+        x, y, heading = _point_along(points, distances, distance)
+        positions.append([vehicle.id, round(x, 4), round(y, 4), round(heading, 2)])
     return positions
 
 
@@ -412,27 +474,31 @@ def _map_payload(world: _World) -> dict[str, Any]:
             x, y = _point(world, item)
             intersections.append({"id": item, "x": x, "y": y})
     for row in range(world.scenario.rows):
-        _, y = _point(world, intersection_id(row, 0))
+        route = tuple(intersection_id(row, col) for col in range(world.scenario.cols))
+        points = _route_points(world, "E", route)
         roads.append(
             {
                 "from": f"west-{row}",
                 "to": f"east-{row}",
-                "x1": MAP_EDGE,
-                "y1": y,
-                "x2": 1 - MAP_EDGE,
-                "y2": y,
+                "x1": points[0][0],
+                "y1": points[0][1],
+                "x2": points[-1][0],
+                "y2": points[-1][1],
+                "points": [{"x": round(x, 4), "y": round(y, 4)} for x, y in points],
             }
         )
     for col in range(world.scenario.cols):
-        x, _ = _point(world, intersection_id(0, col))
+        route = tuple(intersection_id(row, col) for row in range(world.scenario.rows))
+        points = _route_points(world, "S", route)
         roads.append(
             {
                 "from": f"north-{col}",
                 "to": f"south-{col}",
-                "x1": x,
-                "y1": MAP_EDGE,
-                "x2": x,
-                "y2": 1 - MAP_EDGE,
+                "x1": points[0][0],
+                "y1": points[0][1],
+                "x2": points[-1][0],
+                "y2": points[-1][1],
+                "points": [{"x": round(x, 4), "y": round(y, 4)} for x, y in points],
             }
         )
     return {"rows": world.scenario.rows, "cols": world.scenario.cols, "intersections": intersections, "roads": roads}

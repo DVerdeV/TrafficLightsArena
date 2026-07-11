@@ -1,3 +1,5 @@
+import math
+
 from traffic_arena.engine import fixed_time_controller, run_scenario
 from traffic_arena.scenarios import PUBLIC_SCENARIOS
 from traffic_arena.scoring import scenario_score
@@ -14,26 +16,21 @@ def test_replay_map_has_complete_streets_and_stable_traffic():
     assert result.replay is not None
     assert len(result.replay["map"]["roads"]) == scenario.rows + scenario.cols
     previous = {}
-    vectors = {0: (1, 0), 90: (0, 1), 180: (-1, 0), 270: (0, -1)}
     for frame in result.replay["frames"]:
         occupied = set()
-        lanes = {}
+        positions = []
         for vehicle_id, x, y, heading in frame["vehicles"]:
-            position = (x, y, heading)
+            position = (x, y)
             assert position not in occupied
             occupied.add(position)
-            lane = (heading, round(y if heading in (0, 180) else x, 4))
-            lanes.setdefault(lane, []).append((x, y))
+            positions.append(position)
             if vehicle_id in previous:
                 old_x, old_y, old_heading = previous[vehicle_id]
-                dx, dy = vectors[old_heading]
-                assert (x - old_x) * dx + (y - old_y) * dy >= -0.0001
-            previous[vehicle_id] = position
-        for (heading, _), positions in lanes.items():
-            axis = 0 if heading in (0, 180) else 1
-            scale = 1200 if axis == 0 else 700
-            coordinates = sorted(position[axis] for position in positions)
-            assert all(
-                (after - before) * scale >= 20
-                for before, after in zip(coordinates, coordinates[1:])
-            )
+                radians = math.radians(old_heading)
+                movement = (x - old_x) * 1200 * math.cos(radians) + (y - old_y) * 700 * math.sin(radians)
+                assert movement >= -0.1
+            previous[vehicle_id] = (x, y, heading)
+        for index, first in enumerate(positions):
+            for second in positions[index + 1:]:
+                distance = math.hypot((first[0] - second[0]) * 1200, (first[1] - second[1]) * 700)
+                assert distance >= 12

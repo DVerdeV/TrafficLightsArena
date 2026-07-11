@@ -12,6 +12,12 @@ const CAR_ASSETS = ["black", "blue", "green", "red", "yellow"].map((color) => {
   image.addEventListener("load", draw);
   return image;
 });
+const TREE_ASSETS = ["small", "large"].map((size) => {
+  const image = new Image();
+  image.src = `assets/tree_${size}.png`;
+  image.addEventListener("load", draw);
+  return image;
+});
 
 const canvas = document.querySelector("#arena");
 const ctx = canvas.getContext("2d");
@@ -21,10 +27,26 @@ function worldPoint(x, y) {
   return { x: x * WORLD_WIDTH, y: y * WORLD_HEIGHT };
 }
 
-function roadEndpoint(value, size) {
-  if (value < 0.05) return 0;
-  if (value > 0.95) return size;
-  return value * size;
+function roadPoints(road) {
+  const points = road.points?.length ? road.points : [{ x: road.x1, y: road.y1 }, { x: road.x2, y: road.y2 }];
+  return points.map((point) => worldPoint(point.x, point.y));
+}
+
+function distanceToSegment(point, start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  const amount = lengthSquared
+    ? Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared))
+    : 0;
+  return Math.hypot(point.x - (start.x + dx * amount), point.y - (start.y + dy * amount));
+}
+
+function distanceToRoads(point, replay) {
+  return Math.min(...replay.map.roads.flatMap((road) => {
+    const points = roadPoints(road);
+    return points.slice(0, -1).map((start, index) => distanceToSegment(point, start, points[index + 1]));
+  }));
 }
 
 function resize() {
@@ -42,68 +64,111 @@ function prepareCanvas() {
   ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 }
 
-function drawCityBlocks(replay) {
-  const points = replay.map.intersections.map((item) => worldPoint(item.x, item.y));
-  const streetXs = [...new Set(points.map((item) => item.x))].sort((a, b) => a - b);
-  const streetYs = [...new Set(points.map((item) => item.y))].sort((a, b) => a - b);
-  const xBounds = [0, ...streetXs, WORLD_WIDTH];
-  const yBounds = [0, ...streetYs, WORLD_HEIGHT];
-
-  for (let row = 0; row < yBounds.length - 1; row += 1) {
-    for (let col = 0; col < xBounds.length - 1; col += 1) {
-      const left = xBounds[col] + (col === 0 ? 15 : CURB_WIDTH / 2 + 14);
-      const right = xBounds[col + 1] - (col === xBounds.length - 2 ? 15 : CURB_WIDTH / 2 + 14);
-      const top = yBounds[row] + (row === 0 ? 15 : CURB_WIDTH / 2 + 14);
-      const bottom = yBounds[row + 1] - (row === yBounds.length - 2 ? 15 : CURB_WIDTH / 2 + 14);
-      const width = right - left;
-      const height = bottom - top;
-      if (width < 34 || height < 34) continue;
-
-      ctx.fillStyle = "#c5c5bb";
-      ctx.beginPath();
-      ctx.roundRect(left, top, width, height, 3);
-      ctx.fill();
-      const inset = Math.min(16, width * 0.12, height * 0.12);
-      const building = { x: left + inset, y: top + inset, width: width - inset * 2, height: height - inset * 2 };
-      ctx.fillStyle = "rgba(79, 77, 72, 0.2)";
-      ctx.beginPath();
-      ctx.roundRect(building.x + 4, building.y + 5, building.width, building.height, 2);
-      ctx.fill();
-      ctx.fillStyle = BUILDING_COLORS[(row * 5 + col * 3) % BUILDING_COLORS.length];
-      ctx.beginPath();
-      ctx.roundRect(building.x, building.y, building.width, building.height, 2);
-      ctx.fill();
-
-      ctx.fillStyle = "rgba(77, 81, 71, 0.2)";
-      ctx.beginPath();
-      ctx.arc(right - 5, top + 12, 6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = (row + col) % 2 === 0 ? "#567663" : "#687a55";
-      ctx.beginPath();
-      ctx.arc(right - 7, top + 9, 5.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
+function drawTree(x, y, seed, size = 24) {
+  const image = TREE_ASSETS[seed % TREE_ASSETS.length];
+  if (!image.complete || !image.naturalWidth) return;
+  ctx.save();
+  ctx.globalAlpha = 0.76;
+  ctx.translate(x, y);
+  ctx.rotate(((seed % 7) - 3) * 0.04);
+  ctx.drawImage(image, -size / 2, -size / 2, size, size);
+  ctx.restore();
 }
 
-function roadCoordinates(road) {
-  return {
-    x1: roadEndpoint(road.x1, WORLD_WIDTH),
-    y1: roadEndpoint(road.y1, WORLD_HEIGHT),
-    x2: roadEndpoint(road.x2, WORLD_WIDTH),
-    y2: roadEndpoint(road.y2, WORLD_HEIGHT),
-  };
+function drawCityBlocks(replay) {
+  if (replay.scenario.id === "northbound-morning") {
+    ctx.fillStyle = "#9eb9b9";
+    ctx.fillRect(1035, 0, 165, WORLD_HEIGHT);
+    ctx.fillStyle = "#9eaa91";
+    ctx.fillRect(1017, 0, 18, WORLD_HEIGHT);
+    ctx.strokeStyle = "rgba(216, 227, 223, 0.35)";
+    ctx.lineWidth = 2;
+    for (let y = 18; y < WORLD_HEIGHT; y += 38) {
+      ctx.beginPath();
+      ctx.moveTo(1050, y);
+      ctx.lineTo(1185, y + 9);
+      ctx.stroke();
+    }
+    for (let y = 45; y < WORLD_HEIGHT; y += 82) drawTree(1008, y, y, 28);
+  } else if (replay.scenario.id === "balanced-grid") {
+    ctx.fillStyle = "#d9d5c8";
+    ctx.beginPath();
+    ctx.roundRect(405, 240, 390, 255, 8);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(185, 180, 167, 0.45)";
+    ctx.lineWidth = 1;
+    for (let x = 425; x < 780; x += 28) {
+      ctx.beginPath();
+      ctx.moveTo(x, 250);
+      ctx.lineTo(x, 485);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#b7c5bf";
+    ctx.beginPath();
+    ctx.arc(600, 366, 34, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#90aaa8";
+    ctx.beginPath();
+    ctx.arc(600, 366, 24, 0, Math.PI * 2);
+    ctx.fill();
+    [[445, 278], [755, 278], [445, 458], [755, 458]].forEach(([x, y], index) => drawTree(x, y, index, 30));
+  } else {
+    ctx.fillStyle = "#aebba0";
+    ctx.beginPath();
+    ctx.roundRect(245, 258, 170, 118, 18);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(216, 211, 195, 0.8)";
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.moveTo(260, 352);
+    ctx.bezierCurveTo(300, 295, 355, 340, 402, 278);
+    ctx.stroke();
+    [[270, 280], [310, 350], [350, 285], [393, 345]].forEach(([x, y], index) => drawTree(x, y, index, 29));
+  }
+
+  for (let row = 0; row < 7; row += 1) {
+    for (let col = 0; col < 12; col += 1) {
+      const seed = row * 31 + col * 17 + replay.map.rows * 13 + replay.map.cols;
+      const center = { x: 48 + col * 101 + ((seed * 7) % 19) - 9, y: 42 + row * 103 + ((seed * 11) % 17) - 8 };
+      if (distanceToRoads(center, replay) < 82) continue;
+      if (replay.scenario.id === "northbound-morning" && center.x > 990) continue;
+      if (replay.scenario.id === "balanced-grid" && center.x > 385 && center.x < 815 && center.y > 220 && center.y < 515) continue;
+      if (replay.scenario.id === "city-rush" && center.x > 225 && center.x < 435 && center.y > 235 && center.y < 395) continue;
+      const width = 48 + (seed % 37);
+      const height = 34 + ((seed * 3) % 39);
+      const left = center.x - width / 2;
+      const top = center.y - height / 2;
+      ctx.fillStyle = "#c4c3ba";
+      ctx.beginPath();
+      ctx.roundRect(left - 8, top - 8, width + 16, height + 16, 3);
+      ctx.fill();
+      ctx.fillStyle = "rgba(79, 77, 72, 0.2)";
+      ctx.beginPath();
+      ctx.roundRect(left + 4, top + 5, width, height, 2);
+      ctx.fill();
+      ctx.fillStyle = BUILDING_COLORS[seed % BUILDING_COLORS.length];
+      ctx.beginPath();
+      ctx.roundRect(left, top, width, height, 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(119, 123, 118, 0.42)";
+      ctx.fillRect(left + 8, top + 8, Math.max(10, width * 0.24), Math.max(7, height * 0.2));
+      const treeX = left + width + 9;
+      const treeY = top + 7;
+      if (seed % 3 === 0) drawTree(treeX, treeY, seed, 23 + (seed % 5));
+    }
+  }
 }
 
 function strokeRoads(replay, width, color) {
   ctx.strokeStyle = color;
   ctx.lineWidth = width;
   ctx.lineCap = "butt";
+  ctx.lineJoin = "round";
   for (const road of replay.map.roads) {
-    const { x1, y1, x2, y2 } = roadCoordinates(road);
+    const points = roadPoints(road);
     ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
+    ctx.moveTo(points[0].x, points[0].y);
+    for (const point of points.slice(1)) ctx.lineTo(point.x, point.y);
     ctx.stroke();
   }
 }
@@ -114,65 +179,76 @@ function drawRoads(replay) {
   ctx.strokeStyle = "rgba(214, 211, 197, 0.48)";
   ctx.lineWidth = 1;
   for (const road of replay.map.roads) {
-    const { x1, y1, x2, y2 } = roadCoordinates(road);
-    const horizontal = Math.abs(x2 - x1) > Math.abs(y2 - y1);
-    for (const offset of [-ROAD_WIDTH / 2 + 5, ROAD_WIDTH / 2 - 5]) {
-      ctx.beginPath();
-      ctx.moveTo(x1 + (horizontal ? 0 : offset), y1 + (horizontal ? offset : 0));
-      ctx.lineTo(x2 + (horizontal ? 0 : offset), y2 + (horizontal ? offset : 0));
-      ctx.stroke();
+    const points = roadPoints(road);
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const start = points[index];
+      const end = points[index + 1];
+      const length = Math.hypot(end.x - start.x, end.y - start.y);
+      const normalX = -(end.y - start.y) / length;
+      const normalY = (end.x - start.x) / length;
+      for (const offset of [-ROAD_WIDTH / 2 + 5, ROAD_WIDTH / 2 - 5]) {
+        ctx.beginPath();
+        ctx.moveTo(start.x + normalX * offset, start.y + normalY * offset);
+        ctx.lineTo(end.x + normalX * offset, end.y + normalY * offset);
+        ctx.stroke();
+      }
     }
   }
 
-  const points = replay.map.intersections.map((item) => worldPoint(item.x, item.y));
-  const xs = [...new Set(points.map((item) => item.x))];
-  const ys = [...new Set(points.map((item) => item.y))];
   ctx.strokeStyle = "rgba(210, 174, 97, 0.78)";
   ctx.lineWidth = 2;
   ctx.setLineDash([14, 12]);
-  for (const y of ys) {
-    let start = 0;
-    for (const x of xs) {
+  for (const road of replay.map.roads) {
+    const points = roadPoints(road);
+    for (let index = 0; index < points.length - 1; index += 1) {
       ctx.beginPath();
-      ctx.moveTo(start, y);
-      ctx.lineTo(x - INTERSECTION_SIZE / 2, y);
+      ctx.moveTo(points[index].x, points[index].y);
+      ctx.lineTo(points[index + 1].x, points[index + 1].y);
       ctx.stroke();
-      start = x + INTERSECTION_SIZE / 2;
     }
-    ctx.beginPath();
-    ctx.moveTo(start, y);
-    ctx.lineTo(WORLD_WIDTH, y);
-    ctx.stroke();
-  }
-  for (const x of xs) {
-    let start = 0;
-    for (const y of ys) {
-      ctx.beginPath();
-      ctx.moveTo(x, start);
-      ctx.lineTo(x, y - INTERSECTION_SIZE / 2);
-      ctx.stroke();
-      start = y + INTERSECTION_SIZE / 2;
-    }
-    ctx.beginPath();
-    ctx.moveTo(x, start);
-    ctx.lineTo(x, WORLD_HEIGHT);
-    ctx.stroke();
   }
   ctx.setLineDash([]);
 }
 
-function drawCrosswalks(cx, cy) {
+function drawOrientedRect(cx, cy, tangentX, tangentY, length, width) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(Math.atan2(tangentY, tangentX));
+  ctx.fillRect(-length / 2, -width / 2, length, width);
+  ctx.restore();
+}
+
+function intersectionTangents(replay, intersection) {
+  const center = worldPoint(intersection.x, intersection.y);
+  return replay.map.roads.flatMap((road) => {
+    const points = roadPoints(road);
+    const index = points.findIndex((point) => Math.hypot(point.x - center.x, point.y - center.y) < 1);
+    if (index === -1) return [];
+    const start = points[Math.max(0, index - 1)];
+    const end = points[Math.min(points.length - 1, index + 1)];
+    const length = Math.hypot(end.x - start.x, end.y - start.y);
+    return [{ x: (end.x - start.x) / length, y: (end.y - start.y) / length }];
+  });
+}
+
+function drawCrosswalks(cx, cy, tangents) {
   ctx.fillStyle = "rgba(231, 228, 217, 0.72)";
-  for (let offset = -28; offset <= 28; offset += 14) {
-    ctx.fillRect(cx - 39, cy + offset - 3, 12, 6);
-    ctx.fillRect(cx + 27, cy + offset - 3, 12, 6);
-    ctx.fillRect(cx + offset - 3, cy - 39, 6, 12);
-    ctx.fillRect(cx + offset - 3, cy + 27, 6, 12);
+  for (const tangent of tangents) {
+    const normal = { x: -tangent.y, y: tangent.x };
+    for (const side of [-1, 1]) {
+      for (let offset = -28; offset <= 28; offset += 14) {
+        drawOrientedRect(
+          cx + tangent.x * side * 33 + normal.x * offset,
+          cy + tangent.y * side * 33 + normal.y * offset,
+          tangent.x,
+          tangent.y,
+          12,
+          6,
+        );
+      }
+      drawOrientedRect(cx + tangent.x * side * 49, cy + tangent.y * side * 49, normal.x, normal.y, 32, 3);
+    }
   }
-  ctx.fillRect(cx - 50, cy - 37, 3, 32);
-  ctx.fillRect(cx + 47, cy + 5, 3, 32);
-  ctx.fillRect(cx + 5, cy - 50, 32, 3);
-  ctx.fillRect(cx - 37, cy + 47, 32, 3);
 }
 
 function signalColor(phase, axis) {
@@ -196,8 +272,10 @@ function drawIntersections(replay, frame) {
   for (const item of replay.map.intersections) {
     const { x, y } = worldPoint(item.x, item.y);
     ctx.fillStyle = "#41413d";
-    ctx.fillRect(x - INTERSECTION_SIZE / 2, y - INTERSECTION_SIZE / 2, INTERSECTION_SIZE, INTERSECTION_SIZE);
-    drawCrosswalks(x, y);
+    ctx.beginPath();
+    ctx.arc(x, y, INTERSECTION_SIZE / 2, 0, Math.PI * 2);
+    ctx.fill();
+    drawCrosswalks(x, y, intersectionTangents(replay, item));
     const phase = frame.signals[item.id] || "ALL_RED";
     drawSignal(x + 36, y - 36, signalColor(phase, "NS"));
     drawSignal(x - 36, y + 36, signalColor(phase, "NS"));
