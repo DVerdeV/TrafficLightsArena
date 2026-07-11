@@ -233,15 +233,51 @@ function signalColor(phase, axis) {
   return "#cf2d56";
 }
 
-function drawSignal(x, y, color) {
+function drawApproachSignal(cx, cy, direction, color) {
+  const right = { x: -direction.y, y: direction.x };
+  const approachOffset = INTERSECTION_SIZE / 2 + 8;
+  const curbOffset = ROAD_WIDTH / 2;
+  const poleLength = 7;
+  const stop = {
+    x: cx - direction.x * approachOffset,
+    y: cy - direction.y * approachOffset,
+  };
+  const curb = {
+    x: stop.x + right.x * curbOffset,
+    y: stop.y + right.y * curbOffset,
+  };
+  const x = curb.x + right.x * poleLength;
+  const y = curb.y + right.y * poleLength;
+
+  ctx.strokeStyle = "rgba(221, 217, 204, 0.7)";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(stop.x + right.x * 4, stop.y + right.y * 4);
+  ctx.lineTo(stop.x + right.x * (curbOffset - 5), stop.y + right.y * (curbOffset - 5));
+  ctx.stroke();
+  ctx.strokeStyle = "#292923";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(curb.x, curb.y);
+  ctx.lineTo(x, y);
+  ctx.stroke();
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(Math.atan2(right.y, right.x));
+  ctx.fillStyle = `${color}24`;
+  ctx.beginPath();
+  ctx.arc(0, 0, 7, 0, Math.PI * 2);
+  ctx.fill();
   ctx.fillStyle = "#171711";
   ctx.beginPath();
-  ctx.roundRect(x - 5, y - 7, 10, 14, 3);
+  ctx.roundRect(-7, -4.5, 14, 9, 2);
   ctx.fill();
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.arc(x, y, 3.2, 0, Math.PI * 2);
+  ctx.arc(0, 0, 3.2, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
 }
 
 function drawIntersections(replay, frame) {
@@ -255,21 +291,12 @@ function drawIntersections(replay, frame) {
     const phase = frame.signals[item.id] || "ALL_RED";
     const horizontal = tangents.find((tangent) => tangent.axis === "EW");
     const vertical = tangents.find((tangent) => tangent.axis === "NS");
-    const normalEW = horizontal ? { x: -horizontal.y, y: horizontal.x } : { x: 0, y: 1 };
-    const normalNS = vertical ? { x: -vertical.y, y: vertical.x } : { x: -1, y: 0 };
-    const signalOffset = ROAD_WIDTH / 2 + 7;
-    const corner = (ewSide, nsSide) => ({
-      x: x + normalEW.x * ewSide * signalOffset + normalNS.x * nsSide * signalOffset,
-      y: y + normalEW.y * ewSide * signalOffset + normalNS.y * nsSide * signalOffset,
-    });
-    const northEast = corner(-1, -1);
-    const southWest = corner(1, 1);
-    const southEast = corner(1, -1);
-    const northWest = corner(-1, 1);
-    drawSignal(northEast.x, northEast.y, signalColor(phase, "NS"));
-    drawSignal(southWest.x, southWest.y, signalColor(phase, "NS"));
-    drawSignal(southEast.x, southEast.y, signalColor(phase, "EW"));
-    drawSignal(northWest.x, northWest.y, signalColor(phase, "EW"));
+    const ewTangent = horizontal || { x: 1, y: 0 };
+    const nsTangent = vertical || { x: 0, y: 1 };
+    drawApproachSignal(x, y, ewTangent, signalColor(phase, "EW"));
+    drawApproachSignal(x, y, { x: -ewTangent.x, y: -ewTangent.y }, signalColor(phase, "EW"));
+    drawApproachSignal(x, y, nsTangent, signalColor(phase, "NS"));
+    drawApproachSignal(x, y, { x: -nsTangent.x, y: -nsTangent.y }, signalColor(phase, "NS"));
     ctx.fillStyle = "#f7f7f4";
     ctx.font = "9px ui-monospace, monospace";
     ctx.textAlign = "center";
