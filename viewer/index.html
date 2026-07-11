@@ -16,7 +16,15 @@
         <div><span>WAIT</span><strong id="wait">—</strong></div>
       </section>
       <div class="canvas-wrap"><canvas id="arena"></canvas></div>
-      <footer><button id="toggle" title="Play or pause">PAUSE</button><div class="progress"><i id="progress"></i></div><span id="tick">000 / 000</span></footer>
+      <footer>
+        <button id="toggle" class="icon" title="Play or pause" aria-label="Pause replay">Ⅱ</button>
+        <button id="reset" class="icon" title="Restart" aria-label="Restart replay">↺</button>
+        <div class="progress"><i id="progress"></i></div>
+        <div class="speed" aria-label="Playback speed">
+          <button class="active" data-speed="1">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button>
+        </div>
+        <span id="tick">000 / 000</span>
+      </footer>
       <pre id="error" hidden></pre>
     </main>
     <script src="viewer.js"></script>
