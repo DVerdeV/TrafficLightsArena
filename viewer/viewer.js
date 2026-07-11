@@ -210,20 +210,20 @@ function drawRoads(replay) {
   ctx.setLineDash([]);
 }
 
-function intersectionTangents(replay, intersection) {
+function intersectionApproaches(replay, intersection) {
   const center = worldPoint(intersection.x, intersection.y);
   return replay.map.roads.flatMap((road) => {
     const points = roadPoints(road);
     const index = points.findIndex((point) => Math.hypot(point.x - center.x, point.y - center.y) < 1);
     if (index === -1) return [];
-    const start = points[Math.max(0, index - 1)];
-    const end = points[Math.min(points.length - 1, index + 1)];
-    const length = Math.hypot(end.x - start.x, end.y - start.y);
-    return [{
-      x: (end.x - start.x) / length,
-      y: (end.y - start.y) / length,
-      axis: road.from.startsWith("west-") ? "EW" : "NS",
-    }];
+    const axis = road.from.startsWith("west-") ? "EW" : "NS";
+    return [points[index - 1], points[index + 1]].flatMap((adjacent) => {
+      if (!adjacent) return [];
+      const dx = center.x - adjacent.x;
+      const dy = center.y - adjacent.y;
+      const length = Math.hypot(dx, dy);
+      return [{ x: dx / length, y: dy / length, axis }];
+    });
   });
 }
 
@@ -266,20 +266,18 @@ function drawApproachSignal(cx, cy, direction, color) {
 function drawIntersections(replay, frame) {
   for (const item of replay.map.intersections) {
     const { x, y } = worldPoint(item.x, item.y);
-    const tangents = intersectionTangents(replay, item);
+    const approaches = intersectionApproaches(replay, item);
     ctx.fillStyle = "#41413d";
     ctx.beginPath();
     ctx.arc(x, y, INTERSECTION_SIZE / 2, 0, Math.PI * 2);
     ctx.fill();
     const phase = frame.signals[item.id] || "ALL_RED";
-    const horizontal = tangents.find((tangent) => tangent.axis === "EW");
-    const vertical = tangents.find((tangent) => tangent.axis === "NS");
-    const ewTangent = horizontal || { x: 1, y: 0 };
-    const nsTangent = vertical || { x: 0, y: 1 };
-    drawApproachSignal(x, y, ewTangent, signalColor(phase, "EW"));
-    drawApproachSignal(x, y, { x: -ewTangent.x, y: -ewTangent.y }, signalColor(phase, "EW"));
-    drawApproachSignal(x, y, nsTangent, signalColor(phase, "NS"));
-    drawApproachSignal(x, y, { x: -nsTangent.x, y: -nsTangent.y }, signalColor(phase, "NS"));
+    const horizontal = approaches.filter((approach) => approach.axis === "EW");
+    const vertical = approaches.filter((approach) => approach.axis === "NS");
+    drawApproachSignal(x, y, horizontal[0] || { x: 1, y: 0 }, signalColor(phase, "EW"));
+    drawApproachSignal(x, y, horizontal[1] || { x: -1, y: 0 }, signalColor(phase, "EW"));
+    drawApproachSignal(x, y, vertical[0] || { x: 0, y: 1 }, signalColor(phase, "NS"));
+    drawApproachSignal(x, y, vertical[1] || { x: 0, y: -1 }, signalColor(phase, "NS"));
     ctx.fillStyle = "#f7f7f4";
     ctx.font = "9px ui-monospace, monospace";
     ctx.textAlign = "center";
