@@ -235,47 +235,30 @@ function signalColor(phase, axis) {
 
 function drawApproachSignal(cx, cy, direction, color) {
   const right = { x: -direction.y, y: direction.x };
-  const approachOffset = INTERSECTION_SIZE / 2 + 8;
-  const curbOffset = ROAD_WIDTH / 2;
-  const poleLength = 7;
+  const approachOffset = INTERSECTION_SIZE / 2;
+  const laneCenterOffset = ROAD_WIDTH / 4;
   const stop = {
     x: cx - direction.x * approachOffset,
     y: cy - direction.y * approachOffset,
   };
-  const curb = {
-    x: stop.x + right.x * curbOffset,
-    y: stop.y + right.y * curbOffset,
-  };
-  const x = curb.x + right.x * poleLength;
-  const y = curb.y + right.y * poleLength;
-
-  ctx.strokeStyle = "rgba(221, 217, 204, 0.7)";
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.moveTo(stop.x + right.x * 4, stop.y + right.y * 4);
-  ctx.lineTo(stop.x + right.x * (curbOffset - 5), stop.y + right.y * (curbOffset - 5));
-  ctx.stroke();
-  ctx.strokeStyle = "#292923";
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(curb.x, curb.y);
-  ctx.lineTo(x, y);
-  ctx.stroke();
 
   ctx.save();
-  ctx.translate(x, y);
+  ctx.translate(
+    stop.x + right.x * laneCenterOffset,
+    stop.y + right.y * laneCenterOffset,
+  );
   ctx.rotate(Math.atan2(right.y, right.x));
-  ctx.fillStyle = `${color}24`;
+  ctx.fillStyle = "rgba(221, 217, 204, 0.72)";
   ctx.beginPath();
-  ctx.arc(0, 0, 7, 0, Math.PI * 2);
+  ctx.roundRect(-17, -2, 34, 4, 1);
   ctx.fill();
   ctx.fillStyle = "#171711";
   ctx.beginPath();
-  ctx.roundRect(-7, -4.5, 14, 9, 2);
+  ctx.arc(23, 0, 5, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.arc(0, 0, 3.2, 0, Math.PI * 2);
+  ctx.arc(23, 0, 3, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
