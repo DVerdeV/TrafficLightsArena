@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Traffic Lights Arena</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header><strong>Traffic Lights Arena</strong><span>LOCAL SIMULATION</span></header>
+    <main>
+      <section class="topline">
+        <div><span>SCENARIO</span><strong id="scenario">Loading…</strong></div>
+        <div><span>SCORE</span><strong id="score">—</strong></div>
+        <div><span>COMPLETED</span><strong id="completed">—</strong></div>
+        <div><span>WAIT</span><strong id="wait">—</strong></div>
+      </section>
+      <div class="canvas-wrap"><canvas id="arena"></canvas></div>
+      <footer><button id="toggle" title="Play or pause">PAUSE</button><div class="progress"><i id="progress"></i></div><span id="tick">000 / 000</span></footer>
+      <pre id="error" hidden></pre>
+    </main>
+    <script src="viewer.js"></script>
+  </body>
+</html>
