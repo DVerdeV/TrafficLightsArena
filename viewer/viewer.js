@@ -248,9 +248,9 @@ function intersectionApproaches(replay, intersection) {
   });
 }
 
-function signalColor(phase, axis, yellowAxis) {
+function signalColor(phase, axis) {
   if (phase === `${axis}_GREEN`) return "#45b982";
-  if (phase === "YELLOW" && axis === yellowAxis) return "#e2ac37";
+  if (phase === `${axis}_YELLOW`) return "#e2ac37";
   return "#cf2d56";
 }
 
@@ -318,26 +318,17 @@ function drawApproachSignal(cx, cy, direction, color) {
   ctx.restore();
 }
 
-function lastGreenAxis(replay, frameIndex, intersectionId) {
-  for (let index = frameIndex; index >= 0; index -= 1) {
-    const phase = replay.frames[index].signals[intersectionId];
-    if (phase === "NS_GREEN" || phase === "EW_GREEN") return phase.slice(0, 2);
-  }
-  return "NS";
-}
-
-function drawIntersections(replay, frame, frameIndex) {
+function drawIntersections(replay, frame) {
   for (const item of replay.map.intersections) {
     const { x, y } = worldPoint(item.x, item.y);
     const approaches = intersectionApproaches(replay, item);
     const phase = frame.signals[item.id] || "ALL_RED";
-    const yellowAxis = lastGreenAxis(replay, frameIndex, item.id);
     const horizontal = approaches.filter((approach) => approach.axis === "EW");
     const vertical = approaches.filter((approach) => approach.axis === "NS");
-    drawApproachSignal(x, y, horizontal[0] || { x: 1, y: 0 }, signalColor(phase, "EW", yellowAxis));
-    drawApproachSignal(x, y, horizontal[1] || { x: -1, y: 0 }, signalColor(phase, "EW", yellowAxis));
-    drawApproachSignal(x, y, vertical[0] || { x: 0, y: 1 }, signalColor(phase, "NS", yellowAxis));
-    drawApproachSignal(x, y, vertical[1] || { x: 0, y: -1 }, signalColor(phase, "NS", yellowAxis));
+    drawApproachSignal(x, y, horizontal[0] || { x: 1, y: 0 }, signalColor(phase, "EW"));
+    drawApproachSignal(x, y, horizontal[1] || { x: -1, y: 0 }, signalColor(phase, "EW"));
+    drawApproachSignal(x, y, vertical[0] || { x: 0, y: 1 }, signalColor(phase, "NS"));
+    drawApproachSignal(x, y, vertical[1] || { x: 0, y: -1 }, signalColor(phase, "NS"));
     ctx.fillStyle = "#f7f7f4";
     ctx.font = "9px ui-monospace, monospace";
     ctx.textAlign = "center";
@@ -385,7 +376,7 @@ function draw() {
   prepareCanvas();
   drawCityBlocks(replay);
   drawRoads(replay);
-  drawIntersections(replay, amount > 0 ? nextFrame : frame, amount > 0 ? frameIndex + 1 : frameIndex);
+  drawIntersections(replay, amount > 0 ? nextFrame : frame);
   drawCars(frame, nextFrame, amount);
 
   document.querySelector("#completed").textContent = `${frame.completed} / ${replay.metrics.spawned}`;
@@ -396,22 +387,26 @@ function draw() {
   document.querySelector(".progress").setAttribute("aria-valuenow", String(Math.round(progress)));
 }
 
+function showError(message) {
+  const error = document.querySelector("#error");
+  error.hidden = !message;
+  error.textContent = message;
+}
+
 async function refresh() {
   try {
     const statusResponse = await fetch(`../.arena/status.json?t=${Date.now()}`);
     if (!statusResponse.ok) throw new Error(`Status request failed (${statusResponse.status})`);
     const status = await statusResponse.json();
     if (!status.ok) {
-      const error = document.querySelector("#error");
-      error.hidden = false;
-      error.textContent = status.traceback;
+      showError(status.traceback || "Simulation failed");
       return;
     }
-    document.querySelector("#error").hidden = true;
     if (status.revision !== state.revision) {
       const replayResponse = await fetch(`../.arena/replay.json?t=${Date.now()}`);
       if (!replayResponse.ok) throw new Error(`Replay request failed (${replayResponse.status})`);
       const replay = await replayResponse.json();
+      if (replay.version !== 2) throw new Error("Unsupported replay version");
       if (!Array.isArray(replay.frames) || replay.frames.length === 0) throw new Error("Replay has no frames");
       state.replay = replay;
       state.revision = status.revision;
@@ -420,7 +415,10 @@ async function refresh() {
       document.querySelector("#score").textContent = status.score.toLocaleString();
       draw();
     }
-  } catch {}
+    showError("");
+  } catch (error) {
+    showError(error instanceof Error ? error.message : "Could not refresh the simulation");
+  }
 }
 
 function animate(timestamp) {
