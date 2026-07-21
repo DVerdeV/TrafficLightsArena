@@ -44,8 +44,11 @@ def test_signal_transition_is_green_yellow_red_green():
 
     replay = run_scenario(scenario, request_east_west, record_replay=True).replay
     assert replay is not None
+    assert replay["version"] == 2
     phases = [frame["signals"]["A1"] for frame in replay["frames"]]
-    assert ["YELLOW", "YELLOW", "ALL_RED", "EW_GREEN"] in [phases[index:index + 4] for index in range(len(phases) - 3)]
+    assert ["NS_YELLOW", "NS_YELLOW", "ALL_RED", "EW_GREEN"] in [
+        phases[index:index + 4] for index in range(len(phases) - 3)
+    ]
 
 
 def test_stopped_cars_are_behind_the_stop_bars():

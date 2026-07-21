@@ -505,10 +505,16 @@ def _map_payload(world: _World) -> dict[str, Any]:
 
 
 def _frame(world: _World, tick: int) -> dict[str, Any]:
+    def replay_phase(signal: Signal) -> str:
+        if signal.phase != "YELLOW":
+            return signal.phase
+        outgoing_axis = "EW" if signal.next_phase == "NS_GREEN" else "NS"
+        return f"{outgoing_axis}_YELLOW"
+
     return {
         "tick": tick,
         "vehicles": _vehicle_positions(world, tick),
-        "signals": {item: signal.phase for item, signal in world.signals.items()},
+        "signals": {item: replay_phase(signal) for item, signal in world.signals.items()},
         "completed": len(world.completed),
         "waiting": sum(vehicle.wait_ticks for vehicle in world.vehicles.values()),
     }
@@ -541,7 +547,7 @@ def run_scenario(scenario: Scenario, controller: Controller, *, record_replay: b
     replay = None
     if record_replay:
         replay = {
-            "version": 1,
+            "version": 2,
             "scenario": {"id": scenario.id, "name": scenario.name, "ticks": scenario.ticks},
             "map": _map_payload(world),
             "frames": frames,
