@@ -19,9 +19,9 @@
       <footer>
         <button id="toggle" class="icon" title="Play or pause" aria-label="Pause replay">Ⅱ</button>
         <button id="reset" class="icon" title="Restart" aria-label="Restart replay">↺</button>
-        <div class="progress"><i id="progress"></i></div>
+        <div class="progress" role="progressbar" aria-label="Replay progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="progress"></i></div>
         <div class="speed" aria-label="Playback speed">
-          <button class="active" data-speed="1">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button>
+          <button data-speed="0.25" aria-pressed="false">0.25×</button><button data-speed="0.5" aria-pressed="false">0.5×</button><button class="active" data-speed="1" aria-pressed="true">1×</button><button data-speed="2" aria-pressed="false">2×</button><button data-speed="4" aria-pressed="false">4×</button>
         </div>
         <span id="tick">000 / 000</span>
       </footer>

@@ -2,7 +2,12 @@ const WORLD_WIDTH = 1200;
 const WORLD_HEIGHT = 700;
 const ROAD_WIDTH = 82;
 const CURB_WIDTH = 102;
-const INTERSECTION_SIZE = 88;
+// Keep stop bars behind the crossing lanes, including on skewed junctions.
+const STOP_LINE_DISTANCE = 50;
+const STOP_LINE_CENTER_INSET = 2;
+const STOP_LINE_CURB_INSET = 3;
+const MARKING_CLEARANCE = 55;
+const SIGNAL_SETBACK = CURB_WIDTH / 2 + 7;
 const FRAME_DURATION = 80;
 const CAR_COLORS = ["#26251e", "#3478a8", "#1f8a65", "#cf2d56", "#e2ac37"];
 const BUILDING_COLORS = ["#ebe8de", "#b8b4a8", "#d5c2ad", "#aeb9b1", "#c7c4ba"];
@@ -21,7 +26,7 @@ const TREE_ASSETS = ["small", "large"].map((size) => {
 
 const canvas = document.querySelector("#arena");
 const ctx = canvas.getContext("2d");
-const state = { replay: null, playhead: 0, playing: true, speed: 1, stamp: 0 };
+const state = { replay: null, revision: null, playhead: 0, playing: true, speed: 1, stamp: 0 };
 
 function worldPoint(x, y) {
   return { x: x * WORLD_WIDTH, y: y * WORLD_HEIGHT };
@@ -173,6 +178,20 @@ function strokeRoads(replay, width, color) {
   }
 }
 
+function trimAtIntersections(start, end, replay) {
+  const length = Math.hypot(end.x - start.x, end.y - start.y);
+  const dx = (end.x - start.x) / length;
+  const dy = (end.y - start.y) / length;
+  const intersections = replay.map.intersections.map((item) => worldPoint(item.x, item.y));
+  const touchesIntersection = (point) => intersections.some((center) => Math.hypot(point.x - center.x, point.y - center.y) < 1);
+  const startInset = touchesIntersection(start) ? MARKING_CLEARANCE : 0;
+  const endInset = touchesIntersection(end) ? MARKING_CLEARANCE : 0;
+  return {
+    start: { x: start.x + dx * startInset, y: start.y + dy * startInset },
+    end: { x: end.x - dx * endInset, y: end.y - dy * endInset },
+  };
+}
+
 function drawRoads(replay) {
   strokeRoads(replay, CURB_WIDTH, "#aaa99f");
   strokeRoads(replay, ROAD_WIDTH, "#41413d");
@@ -186,10 +205,11 @@ function drawRoads(replay) {
       const length = Math.hypot(end.x - start.x, end.y - start.y);
       const normalX = -(end.y - start.y) / length;
       const normalY = (end.x - start.x) / length;
+      const trimmed = trimAtIntersections(start, end, replay);
       for (const offset of [-ROAD_WIDTH / 2 + 5, ROAD_WIDTH / 2 - 5]) {
         ctx.beginPath();
-        ctx.moveTo(start.x + normalX * offset, start.y + normalY * offset);
-        ctx.lineTo(end.x + normalX * offset, end.y + normalY * offset);
+        ctx.moveTo(trimmed.start.x + normalX * offset, trimmed.start.y + normalY * offset);
+        ctx.lineTo(trimmed.end.x + normalX * offset, trimmed.end.y + normalY * offset);
         ctx.stroke();
       }
     }
@@ -201,9 +221,10 @@ function drawRoads(replay) {
   for (const road of replay.map.roads) {
     const points = roadPoints(road);
     for (let index = 0; index < points.length - 1; index += 1) {
+      const trimmed = trimAtIntersections(points[index], points[index + 1], replay);
       ctx.beginPath();
-      ctx.moveTo(points[index].x, points[index].y);
-      ctx.lineTo(points[index + 1].x, points[index + 1].y);
+      ctx.moveTo(trimmed.start.x, trimmed.start.y);
+      ctx.lineTo(trimmed.end.x, trimmed.end.y);
       ctx.stroke();
     }
   }
@@ -229,37 +250,71 @@ function intersectionApproaches(replay, intersection) {
 
 function signalColor(phase, axis) {
   if (phase === `${axis}_GREEN`) return "#45b982";
-  if (phase === "YELLOW") return "#e2ac37";
+  if (phase === `${axis}_YELLOW`) return "#e2ac37";
   return "#cf2d56";
 }
 
 function drawApproachSignal(cx, cy, direction, color) {
   const right = { x: -direction.y, y: direction.x };
-  const approachOffset = INTERSECTION_SIZE / 2;
-  const laneCenterOffset = ROAD_WIDTH / 4;
+  const approachOffset = STOP_LINE_DISTANCE;
   const stop = {
     x: cx - direction.x * approachOffset,
     y: cy - direction.y * approachOffset,
   };
 
   ctx.save();
+  ctx.lineCap = "round";
+  ctx.strokeStyle = "rgba(36, 37, 31, 0.3)";
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(stop.x + right.x * STOP_LINE_CENTER_INSET, stop.y + right.y * STOP_LINE_CENTER_INSET);
+  ctx.lineTo(stop.x + right.x * (ROAD_WIDTH / 2 - STOP_LINE_CURB_INSET), stop.y + right.y * (ROAD_WIDTH / 2 - STOP_LINE_CURB_INSET));
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(242, 240, 231, 0.9)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(stop.x + right.x * STOP_LINE_CENTER_INSET, stop.y + right.y * STOP_LINE_CENTER_INSET);
+  ctx.lineTo(stop.x + right.x * (ROAD_WIDTH / 2 - STOP_LINE_CURB_INSET), stop.y + right.y * (ROAD_WIDTH / 2 - STOP_LINE_CURB_INSET));
+  ctx.stroke();
+
   ctx.translate(
-    stop.x + right.x * laneCenterOffset,
-    stop.y + right.y * laneCenterOffset,
+    cx - direction.x * SIGNAL_SETBACK + right.x * SIGNAL_SETBACK,
+    cy - direction.y * SIGNAL_SETBACK + right.y * SIGNAL_SETBACK,
   );
-  ctx.rotate(Math.atan2(right.y, right.x));
-  ctx.fillStyle = "rgba(221, 217, 204, 0.72)";
+  ctx.rotate(Math.atan2(direction.y, direction.x) - Math.PI / 2);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.24)";
   ctx.beginPath();
-  ctx.roundRect(-17, -2, 34, 4, 1);
+  ctx.roundRect(-7, -15, 14, 30, 5);
   ctx.fill();
-  ctx.fillStyle = "#171711";
   ctx.beginPath();
-  ctx.arc(23, 0, 5, 0, Math.PI * 2);
+  ctx.roundRect(-6, -16, 12, 30, 4);
+  ctx.fillStyle = "#181914";
   ctx.fill();
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(23, 0, 3, 0, Math.PI * 2);
-  ctx.fill();
+
+  const lampColors = ["#cf2d56", "#e2ac37", "#45b982"];
+  const activeLamp = lampColors.indexOf(color);
+  for (let index = 0; index < lampColors.length; index += 1) {
+    const y = -10 + index * 9;
+    const isActive = index === activeLamp;
+    if (isActive) {
+      ctx.globalAlpha = 0.2;
+      ctx.fillStyle = lampColors[index];
+      ctx.beginPath();
+      ctx.arc(0, y, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = isActive ? lampColors[index] : "#292a25";
+    ctx.beginPath();
+    ctx.arc(0, y, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = isActive ? 0.52 : 0.18;
+    ctx.fillStyle = isActive ? "#ffffff" : "#74766c";
+    ctx.beginPath();
+    ctx.arc(-0.8, y - 0.8, 1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
   ctx.restore();
 }
 
@@ -267,10 +322,6 @@ function drawIntersections(replay, frame) {
   for (const item of replay.map.intersections) {
     const { x, y } = worldPoint(item.x, item.y);
     const approaches = intersectionApproaches(replay, item);
-    ctx.fillStyle = "#41413d";
-    ctx.beginPath();
-    ctx.arc(x, y, INTERSECTION_SIZE / 2, 0, Math.PI * 2);
-    ctx.fill();
     const phase = frame.signals[item.id] || "ALL_RED";
     const horizontal = approaches.filter((approach) => approach.axis === "EW");
     const vertical = approaches.filter((approach) => approach.axis === "NS");
@@ -325,34 +376,49 @@ function draw() {
   prepareCanvas();
   drawCityBlocks(replay);
   drawRoads(replay);
-  drawIntersections(replay, frame);
+  drawIntersections(replay, amount > 0 ? nextFrame : frame);
   drawCars(frame, nextFrame, amount);
 
   document.querySelector("#completed").textContent = `${frame.completed} / ${replay.metrics.spawned}`;
   document.querySelector("#wait").textContent = `${frame.waiting.toLocaleString()}t`;
   document.querySelector("#tick").textContent = `${String(frame.tick).padStart(3, "0")} / ${replay.frames.length}`;
-  document.querySelector("#progress").style.width = `${(state.playhead / Math.max(replay.frames.length - 1, 1)) * 100}%`;
+  const progress = (state.playhead / Math.max(replay.frames.length - 1, 1)) * 100;
+  document.querySelector("#progress").style.width = `${progress}%`;
+  document.querySelector(".progress").setAttribute("aria-valuenow", String(Math.round(progress)));
+}
+
+function showError(message) {
+  const error = document.querySelector("#error");
+  error.hidden = !message;
+  error.textContent = message;
 }
 
 async function refresh() {
   try {
-    const status = await fetch(`../.arena/status.json?t=${Date.now()}`).then((response) => response.json());
+    const statusResponse = await fetch(`../.arena/status.json?t=${Date.now()}`);
+    if (!statusResponse.ok) throw new Error(`Status request failed (${statusResponse.status})`);
+    const status = await statusResponse.json();
     if (!status.ok) {
-      const error = document.querySelector("#error");
-      error.hidden = false;
-      error.textContent = status.traceback;
+      showError(status.traceback || "Simulation failed");
       return;
     }
-    document.querySelector("#error").hidden = true;
-    const replay = await fetch(`../.arena/replay.json?t=${Date.now()}`).then((response) => response.json());
-    if (replay.score !== state.replay?.score || replay.scenario.id !== state.replay?.scenario.id) {
+    if (status.revision !== state.revision) {
+      const replayResponse = await fetch(`../.arena/replay.json?t=${Date.now()}`);
+      if (!replayResponse.ok) throw new Error(`Replay request failed (${replayResponse.status})`);
+      const replay = await replayResponse.json();
+      if (replay.version !== 2) throw new Error("Unsupported replay version");
+      if (!Array.isArray(replay.frames) || replay.frames.length === 0) throw new Error("Replay has no frames");
       state.replay = replay;
+      state.revision = status.revision;
       state.playhead = 0;
       document.querySelector("#scenario").textContent = replay.scenario.name;
-      document.querySelector("#score").textContent = replay.score.toLocaleString();
+      document.querySelector("#score").textContent = status.score.toLocaleString();
       draw();
     }
-  } catch {}
+    showError("");
+  } catch (error) {
+    showError(error instanceof Error ? error.message : "Could not refresh the simulation");
+  }
 }
 
 function animate(timestamp) {
@@ -377,7 +443,10 @@ document.querySelector("#reset").addEventListener("click", () => {
 for (const button of document.querySelectorAll("[data-speed]")) {
   button.addEventListener("click", () => {
     state.speed = Number(button.dataset.speed);
-    for (const item of document.querySelectorAll("[data-speed]")) item.classList.toggle("active", item === button);
+    for (const item of document.querySelectorAll("[data-speed]")) {
+      item.classList.toggle("active", item === button);
+      item.setAttribute("aria-pressed", String(item === button));
+    }
   });
 }
 addEventListener("resize", resize);
