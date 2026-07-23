@@ -11,6 +11,7 @@ import webbrowser
 from dataclasses import asdict
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 from traffic_arena.engine import fixed_time_controller, run_scenario
 from traffic_arena.score_profiles import score_profile
@@ -48,30 +49,80 @@ def simulate(scenario_index: int) -> None:
         temporary = OUTPUT / "replay.tmp"
         temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
         temporary.replace(OUTPUT / "replay.json")
-        (OUTPUT / "status.json").write_text(
-            json.dumps({"ok": True, "score": score, "scenario": scenario.name, "metrics": asdict(result.metrics)}),
-            encoding="utf-8",
+        write_status(
+            {
+                "ok": True,
+                "revision": time.time_ns(),
+                "score": score,
+                "scenario": scenario.name,
+                "metrics": asdict(result.metrics),
+            }
         )
         print(f"[{time.strftime('%H:%M:%S')}] {scenario.name}: {score:,} points")
     except Exception as exc:
         OUTPUT.mkdir(exist_ok=True)
         error = {"ok": False, "error": str(exc), "traceback": traceback.format_exc()[-4000:]}
-        (OUTPUT / "status.json").write_text(json.dumps(error), encoding="utf-8")
+        write_status({**error, "revision": time.time_ns()})
         print(f"[{time.strftime('%H:%M:%S')}] Error: {exc}")
 
 
+def write_status(payload: dict) -> None:
+    OUTPUT.mkdir(exist_ok=True)
+    temporary = OUTPUT / "status.tmp"
+    temporary.write_text(json.dumps(payload), encoding="utf-8")
+    temporary.replace(OUTPUT / "status.json")
+
+
 class NoCacheHandler(SimpleHTTPRequestHandler):
+    def allowed_request(self) -> bool:
+        host = (self.headers.get("Host") or "").split(":", 1)[0].lower()
+        if host not in {"127.0.0.1", "localhost"}:
+            self.send_error(403)
+            return False
+
+        requested_path = unquote(urlsplit(self.path).path)
+        requested = (ROOT / requested_path.lstrip("/")).resolve()
+        viewer_root = (ROOT / "viewer").resolve()
+        public_runtime_files = {
+            (OUTPUT / "status.json").resolve(),
+            (OUTPUT / "replay.json").resolve(),
+        }
+        if (
+            requested != viewer_root
+            and viewer_root not in requested.parents
+            and requested not in public_runtime_files
+        ):
+            self.send_error(404)
+            return False
+        return True
+
+    def do_GET(self) -> None:
+        if self.allowed_request():
+            super().do_GET()
+
+    def do_HEAD(self) -> None:
+        if self.allowed_request():
+            super().do_HEAD()
+
     def end_headers(self) -> None:
         self.send_header("Cache-Control", "no-store")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+            "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'",
+        )
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
         super().end_headers()
 
     def log_message(self, _format: str, *_args) -> None:
         return
 
 
-def serve(port: int) -> None:
+def create_server(port: int) -> ThreadingHTTPServer:
     handler = lambda *args, **kwargs: NoCacheHandler(*args, directory=str(ROOT), **kwargs)
-    ThreadingHTTPServer(("127.0.0.1", port), handler).serve_forever()
+    return ThreadingHTTPServer(("127.0.0.1", port), handler)
 
 
 def main() -> None:
@@ -82,7 +133,11 @@ def main() -> None:
     args = parser.parse_args()
     scenario_index = next(index for index, scenario in enumerate(PUBLIC_SCENARIOS) if scenario.id == args.scenario)
 
-    server = threading.Thread(target=serve, args=(args.port,), daemon=True)
+    try:
+        httpd = create_server(args.port)
+    except OSError as exc:
+        raise SystemExit(f"Could not start viewer on port {args.port}: {exc}") from exc
+    server = threading.Thread(target=httpd.serve_forever, daemon=True)
     server.start()
     simulate(scenario_index)
     url = f"http://127.0.0.1:{args.port}/viewer/"
@@ -102,6 +157,9 @@ def main() -> None:
                 simulate(scenario_index)
     except KeyboardInterrupt:
         print("\nStopped.")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
 
 
 if __name__ == "__main__":

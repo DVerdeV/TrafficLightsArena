@@ -11,13 +11,14 @@ from typing import Any, Literal
 from .scenarios import DemandWindow, Scenario
 
 GreenPhase = Literal["NS_GREEN", "EW_GREEN"]
+SignalPhase = Literal["NS_GREEN", "EW_GREEN", "NS_YELLOW", "EW_YELLOW", "ALL_RED"]
 Direction = Literal["N", "S", "E", "W"]
 Controller = Callable[[dict[str, Any]], dict[str, GreenPhase]]
 
 
 @dataclass(slots=True)
 class Signal:
-    phase: str = "NS_GREEN"
+    phase: SignalPhase = "NS_GREEN"
     phase_age: int = 0
     requested: GreenPhase = "NS_GREEN"
     next_phase: GreenPhase = "EW_GREEN"
@@ -186,8 +187,9 @@ def _controller_state(world: _World, tick: int) -> dict[str, Any]:
     intersections: dict[str, Any] = {}
     for item, signal in world.signals.items():
         queues, oldest = _queue_metrics(world, item)
+        controller_phase = "YELLOW" if signal.phase.endswith("_YELLOW") else signal.phase
         intersections[item] = {
-            "phase": signal.phase,
+            "phase": controller_phase,
             "phase_age": signal.phase_age,
             "can_switch": signal.phase in ("NS_GREEN", "EW_GREEN") and signal.phase_age >= MIN_GREEN,
             "queues": queues,
@@ -239,11 +241,11 @@ def _advance_signals(world: _World) -> None:
         if signal.phase in ("NS_GREEN", "EW_GREEN"):
             if signal.requested != signal.phase and signal.phase_age >= MIN_GREEN:
                 signal.next_phase = signal.requested
-                signal.phase = "YELLOW"
+                signal.phase = "NS_YELLOW" if signal.phase == "NS_GREEN" else "EW_YELLOW"
                 signal.phase_age = 0
             else:
                 signal.phase_age += 1
-        elif signal.phase == "YELLOW":
+        elif signal.phase in ("NS_YELLOW", "EW_YELLOW"):
             signal.phase_age += 1
             if signal.phase_age >= YELLOW_TICKS:
                 signal.phase = "ALL_RED"
@@ -564,7 +566,7 @@ def run_scenario(scenario: Scenario, controller: Controller, *, record_replay: b
     replay = None
     if record_replay:
         replay = {
-            "version": 1,
+            "version": 2,
             "scenario": {"id": scenario.id, "name": scenario.name, "ticks": scenario.ticks},
             "map": _map_payload(world),
             "frames": frames,

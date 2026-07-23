@@ -5,6 +5,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 
+PUBLIC_WEIGHT = 0.2
+HIDDEN_WEIGHT = 1 - PUBLIC_WEIGHT
+
+
 @dataclass(frozen=True, slots=True)
 class ScoreProfile:
     baseline_cost: int
@@ -44,7 +48,11 @@ def geometric_mean(scores: Sequence[int]) -> int:
     return round(math.exp(sum(math.log(score) for score in scores) / len(scores)))
 
 
+def final_total_score(public_score: int, hidden_score: int) -> int:
+    return round(public_score * PUBLIC_WEIGHT + hidden_score * HIDDEN_WEIGHT)
+
+
 def aggregate_scores(public_scores: Sequence[int], hidden_scores: Sequence[int]) -> tuple[int, int, int]:
     public = geometric_mean(public_scores)
     hidden = geometric_mean(hidden_scores)
-    return public, hidden, round(public * 0.2 + hidden * 0.8)
+    return public, hidden, final_total_score(public, hidden)

@@ -1,4 +1,6 @@
 import math
+import threading
+from http.client import HTTPConnection
 
 import pytest
 
@@ -6,6 +8,7 @@ from traffic_arena.engine import _spawn_rate, fixed_time_controller, run_scenari
 from traffic_arena.score_profiles import score_profile
 from traffic_arena.scenarios import PUBLIC_SCENARIOS, DemandWindow, Scenario
 from traffic_arena.scoring import aggregate_scores, scenario_score
+from run import create_server
 
 
 def test_baseline_score_is_10000():
@@ -106,3 +109,59 @@ def test_replay_map_has_complete_streets_and_stable_traffic():
             for second in positions[index + 1:]:
                 distance = math.hypot((first[0] - second[0]) * 1200, (first[1] - second[1]) * 700)
                 assert distance >= 12
+
+
+def test_signal_transition_includes_directional_yellow_and_all_red():
+    scenario = Scenario(
+        "transition-test",
+        "Transition test",
+        1,
+        1,
+        12,
+        ticks=12,
+        horizontal_rate=0,
+        vertical_rate=0,
+    )
+
+    controller_phases = []
+
+    def request_east_west(state):
+        controller_phases.append(state["intersections"]["A1"]["phase"])
+        return {item: "EW_GREEN" for item in state["intersections"]}
+
+    replay = run_scenario(scenario, request_east_west, record_replay=True).replay
+    assert replay is not None
+    assert replay["version"] == 2
+    phases = [frame["signals"]["A1"] for frame in replay["frames"]]
+    assert ["NS_YELLOW", "NS_YELLOW", "ALL_RED", "EW_GREEN"] in [
+        phases[index:index + 4] for index in range(len(phases) - 3)
+    ]
+    assert "YELLOW" in controller_phases
+    assert "NS_YELLOW" not in controller_phases
+
+
+def test_viewer_server_restricts_hosts_files_and_sets_csp():
+    server = create_server(0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = HTTPConnection("127.0.0.1", server.server_port)
+        connection.request("GET", "/viewer/", headers={"Host": "attacker.example"})
+        assert connection.getresponse().status == 403
+        connection.close()
+
+        connection = HTTPConnection("127.0.0.1", server.server_port)
+        connection.request("GET", "/.arena/team.json", headers={"Host": "localhost"})
+        assert connection.getresponse().status == 404
+        connection.close()
+
+        connection = HTTPConnection("127.0.0.1", server.server_port)
+        connection.request("GET", "/viewer/", headers={"Host": "127.0.0.1"})
+        response = connection.getresponse()
+        assert response.status == 200
+        assert response.getheader("Content-Security-Policy")
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
