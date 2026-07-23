@@ -17,5 +17,5 @@ jobs:
       - run: python -m pytest -q
       - name: Verify hidden scenarios are absent
         run: |
-          ! rg -n 'HIDDEN_SCENARIOS|hidden-0[1-5]|6637|12377|44729|99173|104729' . \
+          ! rg -n 'HIDDEN_SCENARIOS|hidden-[0-9]+' . \
             --glob '!README.md' --glob '!.git/**' --glob '!.arena/**'
