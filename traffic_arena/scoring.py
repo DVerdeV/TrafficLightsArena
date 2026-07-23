@@ -2,12 +2,38 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 
-def scenario_score(cost: int, baseline_cost: int) -> int:
-    if baseline_cost <= 0:
-        raise ValueError("baseline_cost must be positive")
-    return min(25_000, round(10_000 * baseline_cost / max(cost, 1)))
+@dataclass(frozen=True, slots=True)
+class ScoreProfile:
+    baseline_cost: int
+    target_cost: int
+    expected_spawned: int
+
+    def __post_init__(self) -> None:
+        if self.target_cost <= 0:
+            raise ValueError("target_cost must be positive")
+        if self.baseline_cost <= self.target_cost:
+            raise ValueError("baseline_cost must be greater than target_cost")
+        if self.expected_spawned <= 0:
+            raise ValueError("expected_spawned must be positive")
+
+
+def scenario_score(cost: int, baseline_cost: int, target_cost: int) -> int:
+    """Map a scenario cost onto the fixed 1..25,000 competition scale."""
+    if cost <= 0:
+        raise ValueError("cost must be positive")
+    if target_cost <= 0:
+        raise ValueError("target_cost must be positive")
+    if baseline_cost <= target_cost:
+        raise ValueError("baseline_cost must be greater than target_cost")
+
+    if cost >= baseline_cost:
+        return max(1, round(10_000 * baseline_cost / cost))
+
+    progress = min(1.0, (baseline_cost - cost) / (baseline_cost - target_cost))
+    return round(10_000 + 15_000 * progress**2)
 
 
 def geometric_mean(scores: Sequence[int]) -> int:
@@ -21,4 +47,4 @@ def geometric_mean(scores: Sequence[int]) -> int:
 def aggregate_scores(public_scores: Sequence[int], hidden_scores: Sequence[int]) -> tuple[int, int, int]:
     public = geometric_mean(public_scores)
     hidden = geometric_mean(hidden_scores)
-    return public, hidden, round(public * 0.4 + hidden * 0.6)
+    return public, hidden, round(public * 0.2 + hidden * 0.8)

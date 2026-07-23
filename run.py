@@ -13,6 +13,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from traffic_arena.engine import fixed_time_controller, run_scenario
+from traffic_arena.score_profiles import score_profile
 from traffic_arena.scenarios import PUBLIC_SCENARIOS
 from traffic_arena.scoring import scenario_score
 
@@ -38,7 +39,8 @@ def simulate(scenario_index: int) -> None:
         controller = load_controller()
         baseline = run_scenario(scenario, fixed_time_controller, record_replay=False)
         result = run_scenario(scenario, controller, record_replay=True)
-        score = scenario_score(result.metrics.cost, baseline.metrics.cost)
+        profile = score_profile(scenario.id)
+        score = scenario_score(result.metrics.cost, baseline.metrics.cost, profile.target_cost)
         payload = result.replay
         assert payload is not None
         payload["score"] = score
