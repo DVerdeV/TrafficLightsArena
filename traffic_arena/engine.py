@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from .scenarios import Scenario
+from .scenarios import DemandWindow, Scenario
 
 GreenPhase = Literal["NS_GREEN", "EW_GREEN"]
 Direction = Literal["N", "S", "E", "W"]
@@ -72,7 +72,7 @@ ALL_RED_TICKS = 1
 WORLD_WIDTH = 1200
 WORLD_HEIGHT = 700
 LANE_OFFSET = 14
-STOP_DISTANCE = 66
+STOP_DISTANCE = 55
 CAR_SPACING = 29
 ENTRY_TICKS = 5
 EXIT_TICKS = 6
@@ -126,7 +126,7 @@ def _route_for(world: _World, direction: Direction, lane: int) -> tuple[str, ...
     return tuple(intersection_id(row, lane) for row in reversed(range(scenario.rows)))
 
 
-def _spawn_rate(scenario: Scenario, tick: int, axis: str) -> float:
+def _legacy_spawn_rate(scenario: Scenario, tick: int, axis: str) -> float:
     base = scenario.vertical_rate if axis == "NS" else scenario.horizontal_rate
     if scenario.rush_axis == axis:
         base *= 1.2 if tick < scenario.ticks * 0.6 else 0.75
@@ -135,13 +135,36 @@ def _spawn_rate(scenario: Scenario, tick: int, axis: str) -> float:
     return min(base, 0.48)
 
 
+def _demand_window(scenario: Scenario, tick: int) -> DemandWindow:
+    for window in scenario.demand_windows:
+        if window.start_tick <= tick < window.end_tick:
+            return window
+    raise RuntimeError(f"no demand window covers tick {tick}")
+
+
+def _spawn_rate(scenario: Scenario, tick: int, direction: Direction, lane: int) -> float:
+    if not scenario.demand_windows:
+        return _legacy_spawn_rate(scenario, tick, _axis(direction))
+
+    window = _demand_window(scenario, tick)
+    direction_rate = {
+        "N": window.north_rate,
+        "S": window.south_rate,
+        "E": window.east_rate,
+        "W": window.west_rate,
+    }[direction]
+    weights = window.row_weights if direction in ("E", "W") else window.col_weights
+    lane_weight = weights[lane] if weights else 1.0
+    return min(direction_rate * lane_weight, 0.48)
+
+
 def _spawn(world: _World, tick: int) -> None:
     scenario = world.scenario
     candidates: list[tuple[Direction, int]] = []
     candidates.extend((direction, row) for row in range(scenario.rows) for direction in ("E", "W"))
     candidates.extend((direction, col) for col in range(scenario.cols) for direction in ("N", "S"))
     for direction, lane in candidates:
-        if world.rng.random() >= _spawn_rate(scenario, tick, _axis(direction)):
+        if world.rng.random() >= _spawn_rate(scenario, tick, direction, lane):
             continue
         route = _route_for(world, direction, lane)
         vehicle = Vehicle(world.next_vehicle_id, direction, route, tick)
@@ -505,16 +528,10 @@ def _map_payload(world: _World) -> dict[str, Any]:
 
 
 def _frame(world: _World, tick: int) -> dict[str, Any]:
-    def replay_phase(signal: Signal) -> str:
-        if signal.phase != "YELLOW":
-            return signal.phase
-        outgoing_axis = "EW" if signal.next_phase == "NS_GREEN" else "NS"
-        return f"{outgoing_axis}_YELLOW"
-
     return {
         "tick": tick,
         "vehicles": _vehicle_positions(world, tick),
-        "signals": {item: replay_phase(signal) for item, signal in world.signals.items()},
+        "signals": {item: signal.phase for item, signal in world.signals.items()},
         "completed": len(world.completed),
         "waiting": sum(vehicle.wait_ticks for vehicle in world.vehicles.values()),
     }
@@ -547,7 +564,7 @@ def run_scenario(scenario: Scenario, controller: Controller, *, record_replay: b
     replay = None
     if record_replay:
         replay = {
-            "version": 2,
+            "version": 1,
             "scenario": {"id": scenario.id, "name": scenario.name, "ticks": scenario.ticks},
             "map": _map_payload(world),
             "frames": frames,
