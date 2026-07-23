@@ -19,7 +19,7 @@ CONFIG = ROOT / ".arena" / "team.json"
 CONTROLLER = ROOT / "controller.py"
 DEFAULT_API = os.getenv("TRAFFIC_ARENA_URL", "http://localhost:3000")
 POLL_TIMEOUT_SECONDS = 15 * 60
-TOKEN_PATTERN = re.compile(r"^MLG-(?:DEMO-DEMO-DEMO-DEMO|[A-Z2-9]{4}(?:-[A-Z2-9]{4}){3})$")
+TOKEN_PATTERN = re.compile(r"^MLG-(?:DEMO-DEMO-DEMO-DEMO|[A-Z2-9]{4})$")
 
 
 def save_token(token: str, base_url: str) -> None:
@@ -109,12 +109,10 @@ def submit() -> None:
         )
         current_status = status.get("status")
         if current_status == "completed":
-            if not all(isinstance(status.get(key), int) for key in ("publicScore", "hiddenScore", "totalScore")):
-                raise SystemExit("Server returned an incomplete score result.")
-            print(f"PUBLIC  {status['publicScore']:>8,}")
-            print(f"HIDDEN  {status['hiddenScore']:>8,}")
-            print(f"TOTAL   {status['totalScore']:>8,}")
-            webbrowser.open(f"{config['baseUrl']}/es/replay?submission={submission_id}")
+            print("Evaluation completed.")
+            replay_url = f"{config['baseUrl']}/es/replay?submission={submission_id}"
+            print(f"Replay: {replay_url}")
+            webbrowser.open(replay_url)
             return
         if current_status == "failed":
             raise SystemExit(status.get("errorMessage", "Evaluation failed."))
@@ -137,7 +135,7 @@ def main() -> None:
         token = args.token.strip().upper()
         base_url = args.url.rstrip("/")
         if not TOKEN_PATTERN.fullmatch(token):
-            raise SystemExit("Team code must look like MLG-XXXX-XXXX-XXXX-XXXX.")
+            raise SystemExit("Team code must look like MLG-XXXX.")
         parsed_url = urlsplit(base_url)
         if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname or parsed_url.query or parsed_url.fragment:
             raise SystemExit("Event URL must be a valid http:// or https:// address without a query or fragment.")
